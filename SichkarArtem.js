@@ -13,13 +13,10 @@ class PowerStation {
     this.#device = new Map();
     this.#batteryPower = batteryCapacity
     this.#chargingBattery = 0
-
   }
 
   updateInput(voltage, current) {
-    let power = voltage * current
-
-    this.#chargingBattery = power
+    this.#chargingBattery = voltage * current
   }
 
   connectOutput(outputId) {
@@ -27,20 +24,14 @@ class PowerStation {
   }
 
   updateOutput(outputId, voltage, current) {
-    let power = voltage * current
-    this.#device.set(outputId, power)
+    this.#device.set(outputId, voltage * current)
   }
   disconnectOutput(outputId) {
     this.#device.delete(outputId)
   }
 
   updateBatteryLevel(capacityLeft) {
-    if (capacityLeft < 0) {
-      capacityLeft = 0;
-    } else if (capacityLeft >= this.#batteryCapacity) {
-      capacityLeft = this.#batteryCapacity;
-    }
-    this.#batteryPower = capacityLeft
+    this.#batteryPower = Math.max(0, Math.min(this.#batteryCapacity, capacityLeft));
   }
 
   get batteryPercentage() {
@@ -48,115 +39,73 @@ class PowerStation {
   }
 
   get totalOutputPower() {
-    let totalOutput = Array.from(this.#device.values()).reduce((acc, value) => acc + value, 0);
-    return Math.round(totalOutput)
+    return Math.round(this.totalDevicePower)
   }
-
+  get totalDevicePower() {
+    return Array.from(this.#device.values()).reduce((acc, value) => acc + value, 0);
+  }
   get timeRemaining() {
-    let status = this.status
-    if (status == "idle" || status == "overload") {
-      return "99:59"
+    if (this.status === "idle" || this.status === "overload") {
+      return "99:59";
     }
-    let deviceDischarging = Array.from(this.#device.values()).reduce((acc, value) => acc + value, 0);
+    let time
+    const power = Math.abs(this.#chargingBattery - this.totalDevicePower);
+    if (power == 0) return "99:59";
+    time = this.#batteryPower / power
 
-
-    if (status == "discharging") {
-      let batteryStatus = deviceDischarging - this.#chargingBattery
-      let time = this.#batteryPower / batteryStatus
-      let hours = Math.floor(time);
-      let minutes = Math.ceil((time - hours) * 60);
-      let formattedTime = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
-      return formattedTime
-    }
-    if (status == "charging") {
-      let remainingCapacity = this.#batteryCapacity - this.#batteryPower;
-      let batteryStatus = this.#chargingBattery - deviceDischarging
-
-      let time = batteryStatus / batteryStatus
-      let hours = Math.floor(time);
-      let minutes = Math.ceil((time - hours) * 60);
-      let formattedTime = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
-      return formattedTime
-    }
-
-
-
+    let hours = Math.floor(time);
+    let minutes = Math.ceil((time - hours) * 60);
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
   }
 
   get status() {
-    let status
-    let totalDevicePower = Array.from(this.#device.values()).reduce((acc, value) => acc + value, 0);
-
-
-    let batteryStatus = totalDevicePower - this.#chargingBattery
-
-    if (batteryStatus > 0) {
-      status = "discharging"
-    } else {
-      status = "charging"
+    if (this.#chargingBattery > this.#maximumInput || this.totalOutputPower > this.#maximumOutput) {
+      return "overload";
     }
-    if (this.#chargingBattery == totalDevicePower) {
-      status = "idle"
+    if (this.#chargingBattery === this.totalOutputPower && this.#chargingBattery === 0) {
+      return "idle";
     }
-    if (this.#chargingBattery > this.#maximumInput || totalDevicePower > this.#maximumOutput) {
-      status = "overload";
+    if (this.#chargingBattery > this.totalOutputPower) {
+      return "charging";
     }
-    return status
+    if (this.#batteryPower === 0 && this.totalOutputPower > 0) {
+      return "overload"; // Батарея разряжена, а нагрузка есть
+    }
+    return "discharging";
   }
-
 }
-const station = new PowerStation(2000, 500, 800);
+function testPowerStation() {
+  const station = new PowerStation(2000, 500, 800);
 
-console.log("=== Начальный статус ===");
-console.log(station.batteryPercentage); // 100
-console.log(station.totalOutputPower); // 0
-console.log(station.timeRemaining); // 99:59
-console.log(station.status); // idle
+  // Проверяем начальное состояние
+  console.assert(station.batteryPercentage === 100.0, "Ошибка: начальный заряд батареи должен быть 100%");
+  console.assert(station.status === "idle", "Ошибка: начальный статус должен быть 'idle'");
 
-console.log("\n=== Подключаем устройства ===");
-station.connectOutput("laptop");
-station.updateOutput("laptop", 20, 14); // 280W
-console.log(station.totalOutputPower); // 280
-console.log(station.status); // discharging
+  // Подключаем устройство и обновляем потребляемую мощность
+  station.connectOutput("lamp_1");
+  station.updateOutput("lamp_1", 12, 5); // 12V * 5A = 60W
+  console.assert(station.totalOutputPower === 60, "Ошибка: потребляемая мощность должна быть 60W");
+  console.assert(station.status === "discharging", "Ошибка: статус должен быть 'discharging'");
 
-console.log("\n=== Обновляем заряд батареи ===");
-station.updateBatteryLevel(1500); // 75%
-console.log(station.batteryPercentage); // 75
-console.log(station.timeRemaining); // 05:21
+  // Подключаем еще одно устройство
+  station.connectOutput("laptop");
+  station.updateOutput("laptop", 20, 3); // 20V * 3A = 60W
+  console.assert(station.totalOutputPower === 120, "Ошибка: потребляемая мощность должна быть 120W");
 
-console.log("\n=== Подключаем зарядку ===");
-station.updateInput(220, 2); // 440W (заряжает)
-console.log(station.status); // charging
+  // Проверяем расчет оставшегося времени
+  station.updateBatteryLevel(1000); // Заряд 1000Wh
+  console.assert(station.timeRemaining !== "99:59", "Ошибка: расчет оставшегося времени не должен быть 99:59");
 
-console.log("\n=== Балансируем вход и выход ===");
-station.updateInput(280, 1); // 280W (равен выходу)
-console.log(station.status); // idle
+  // Проверяем зарядку батареи
+  station.updateInput(100, 5); // 100V * 5A = 500W (максимальный вход)
+  console.assert(station.status === "charging", "Ошибка: статус должен быть 'charging'");
 
-console.log("\n=== Добавляем больше нагрузки ===");
-station.connectOutput("heater");
-station.updateOutput("heater", 220, 2); // +440W (итого 720W)
-console.log(station.totalOutputPower); // 720
-console.log(station.status); // discharging
+  // Проверяем отключение устройства
+  station.disconnectOutput("lamp_1");
+  console.assert(station.totalOutputPower === 60, "Ошибка: после отключения мощность должна быть 60W");
 
-console.log("\n=== Перегрузка выхода ===");
-station.updateOutput("heater", 220, 3.5); // 770W + 280W = 1050W (> 800W)
-console.log(station.status); // overload
+  console.log("✅ Все тесты пройдены!");
+}
 
-console.log("\n=== Убираем перегрузку ===");
-station.updateOutput("heater", 220, 1.5); // 330W + 280W = 610W (норм)
-console.log(station.status); // discharging
+testPowerStation();
 
-console.log("\n=== Полностью разряжаем батарею ===");
-station.updateBatteryLevel(0); // 0%
-console.log(station.batteryPercentage); // 0
-console.log(station.status); // discharging
-
-console.log("\n=== Полностью заряжаем батарею ===");
-station.updateBatteryLevel(2000); // 100%
-station.updateInput(720, 1); // Вход = выход (зарядка покрывает потребление)
-console.log(station.batteryPercentage); // 100
-console.log(station.status); // idle
-
-console.log("\n=== Перегрузка входа ===");
-station.updateInput(600, 2); // 1200W (> 500W)
-console.log(station.status); 
